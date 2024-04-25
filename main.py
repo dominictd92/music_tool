@@ -5,28 +5,27 @@ from os.path import isfile, join, isdir, basename
 
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
 
 from mutagen import MutagenError
 from mutagen.easyid3 import EasyID3
 from mutagen.mp3 import MP3
 
-from tinytag import TinyTag
-
 
 # remove any colons and slashes from text to use for folder names
-def make_file_folder_safe(replacer_string):
+def make_file_folder_safe_string(replacer_string: str = ""):
     if isinstance(replacer_string, str):
-        replacer_string = replacer_string.replace(":", "-").replace("/", " ")
+        replacer_string = replacer_string.replace(":", "-").replace("/", "&")
     else:
         print(type(replacer_string))
     return replacer_string
 
 
 # recursive method that gets all files within a directory given any
-def get_list(list_of_songs, current_dir, extensions: tuple = ("", "")):
-    for temp_dir in listdir(current_dir):
-        joined_directory = join(current_dir, temp_dir)
-        if isdir(joined_directory):
+def get_list(list_of_songs: list, directory: str, extensions: tuple = ("", ""), sub_dir: bool = True):
+    for temp_dir in listdir(directory):
+        joined_directory = join(directory, temp_dir)
+        if isdir(joined_directory) and sub_dir:
             list_of_songs.extend(get_list([], joined_directory, extensions))
         elif isfile(joined_directory) and joined_directory.endswith(extensions):
             list_of_songs.append(joined_directory)
@@ -34,55 +33,61 @@ def get_list(list_of_songs, current_dir, extensions: tuple = ("", "")):
 
 
 # recursive method that gets all mp3 files within a directory
-def get_mp3_list(list_of_songs, current_dir):
+def get_mp3_list(list_of_songs: list, directory: str):
     # forced tuple so NONE is a placeholder for a false extension
-    return get_list(list_of_songs, current_dir, ('.mp3', 'NONE'))
+    return get_list(list_of_songs, directory, ('.mp3', 'NONE'))
 
 
 # recursive method that gets all mp4 and m4a files within a directory
-def get_mp4_list(list_of_songs, current_dir):
-    return get_list(list_of_songs, current_dir, extensions=('.mp4', '.m4a'))
+def get_mp4_list(list_of_songs: list, directory: str):
+    return get_list(list_of_songs, directory, extensions=('.mp4', '.m4a'))
 
 
 # move a list of files from one destination to another with no exceptions
-def move_files(destination, source=None, list_of_files=None):
-    if destination is not None:
-        if source is not None:
-            print("eh")
-        elif list_of_files is not None:
-            for file in list_of_files:
-                file_name = basename(file)
+def move_files(destination: str = None, source: str = None, list_of_files: list = None):
+    if destination is not None and source is not None:
+        if isdir(destination) and isdir(source):
+            if list_of_files is not None:
+                for file in list_of_files:
+                    file_name = basename(file)
 
-                os.replace(file, join(destination, file_name))
+                    os.replace(file, join(destination, file_name))
+        else:
+            messagebox.showerror("Move Error", "Destination or Source was not valid.")
+    else:
+        messagebox.showerror("Move Error", "Destination or Source was empty.")
 
 
 # method to move music files from one location to another while organizing them by artist and album
-def organize_files(source, destination):
-    music_files = get_list([], source)
-    for file in music_files:
-        file_name = os.path.basename(file)
-        temp_destination: str = destination
-        try:
-            music_file = TinyTag.get(file)
+def organize_files(source: str, destination: str):
+    if isdir(source) and isdir(destination):
+        music_files = get_list([], source)
+        for file in music_files:
+            file_name = os.path.basename(file)
+            temp_destination: str = destination
+            try:
+                music_file = MP3(file, ID3=EasyID3)
 
-            if music_file.artist is not None:
-                # if there is no artist folder, create one
-                artist = make_file_folder_safe(music_file.artist)
-                if not isdir(join(temp_destination, artist)):
-                    mkdir(join(temp_destination, artist))
+                if music_file["artist"] is not None:
+                    # if there is no artist folder, create one
+                    artist = make_file_folder_safe_string(music_file["artist"])
+                    if not isdir(join(temp_destination, artist)):
+                        mkdir(join(temp_destination, artist))
 
-                temp_destination = join(temp_destination, artist)
+                    temp_destination = join(temp_destination, artist)
 
-                if music_file.album is not None:
-                    album = make_file_folder_safe(music_file.album)
-                    if not isdir(join(temp_destination, album)):
-                        mkdir(join(temp_destination, album))
+                    if music_file["album"] is not None:
+                        album = make_file_folder_safe_string(music_file["album"])
+                        if not isdir(join(temp_destination, album)):
+                            mkdir(join(temp_destination, album))
 
-                    temp_destination = join(temp_destination, album)
+                        temp_destination = join(temp_destination, album)
 
-            replace(file, join(temp_destination, file_name))
-        except Exception as exception:
-            print("Broken on above file:" + file + " " + str(exception))
+                replace(file, join(temp_destination, file_name))
+            except Exception as exception:
+                print("Broken on above file:" + file + " " + str(exception))
+    else:
+        messagebox.showerror("Org Error", "Source or Destination are not valid directories.")
 
 
 # Remove all empty folders within a directory
@@ -99,6 +104,9 @@ def clean_directory(source: str):
 class MusicFileManager(tk.Tk):
     song_index = 0
     song_list = []
+    main_mp3_tags = ["title", "artist", "tracknumber", "album", "genre"]
+    artist_mp3_tags = ["artist", "artistsort", "albumartist", "albumartistsort"]
+    album_mp3_tags = ["album", "albumsort"]
     entry_dictionary = {}
     song = None
 
@@ -166,42 +174,53 @@ class MusicFileManager(tk.Tk):
 
         # Function Frame
         function_label = tk.Label(function_frame, text="Functions")
-        function_label.grid(row=0, column=0, columnspan=3, sticky=tk.NSEW)
+        function_label.grid(row=0, column=0, columnspan=4, sticky=tk.NSEW)
 
-        mp3s_button = tk.Button(function_frame, text="Get MP3s", command=lambda: self.get_mp3s())
-        mp3s_button.grid(row=1, column=0, sticky=tk.NSEW)
+        get_all_songs_button = tk.Button(function_frame, text="Get All Songs", width=8, command=lambda: self.set_song_list())
+        get_all_songs_button.grid(row=1, column=0, columnspan=2, sticky=tk.NS)
 
-        mp4s_button = tk.Button(function_frame, text="Get MP4s", command=lambda: self.get_mp3s())
-        mp4s_button.grid(row=1, column=1, sticky=tk.NSEW)
+        get_dir_songs_button = tk.Button(function_frame, text="Get Dir Songs", width=8, command=lambda: self.set_song_list(False))
+        get_dir_songs_button.grid(row=1, column=2, columnspan=2, sticky=tk.NS)
 
-        get_songs_button = tk.Button(function_frame, text="Get Songs", command=lambda: self.get_song_list())
-        get_songs_button.grid(row=1, column=2, sticky=tk.NSEW)
+        mp3s_button = tk.Button(function_frame, text="Get MP3s", width=8, command=lambda: self.move_files(self.get_mp3s()))
+        mp3s_button.grid(row=2, column=0, columnspan=2, sticky=tk.NS)
 
-        move_button = tk.Button(function_frame, text="Move", command=lambda: self.get_song_list())
-        move_button.grid(row=2, column=0, sticky=tk.NSEW)
+        mp4s_button = tk.Button(function_frame, text="Get MP4s", width=8, command=lambda: self.move_files(self.get_mp4s()))
+        mp4s_button.grid(row=2, column=2, columnspan=2, sticky=tk.NS)
 
-        organize_button = tk.Button(function_frame, text="Organize",
-                                    command=lambda: organize_files(self.source.get(), self.destination.get()))
-        organize_button.grid(row=2, column=1, sticky=tk.NSEW)
+        move_button = tk.Button(function_frame, text="Move", width=8, command=lambda: self.move_files(self.get_song_list()))
+        move_button.grid(row=3, column=0, columnspan=2, sticky=tk.NS)
 
-        clean_dir_button = tk.Button(function_frame, text="Clean Dirs",
+        organize_button = tk.Button(function_frame, text="Organize", width=8,
+                                    command=lambda: organize_files(self.source.get(),
+                                                                   self.destination.get()))
+        organize_button.grid(row=3, column=2, columnspan=2, sticky=tk.NS)
+
+        clean_dir_button = tk.Button(function_frame, text="Clean Dirs", width=8,
                                      command=lambda: clean_directory(self.source.get()))
-        clean_dir_button.grid(row=2, column=2, sticky=tk.NSEW)
+        clean_dir_button.grid(row=4, column=0, columnspan=4, sticky=tk.NS)
 
         folder_actions_label = tk.Label(function_frame, text="Folder Actions")
-        folder_actions_label.grid(row=3, column=0, columnspan=3, sticky=tk.NSEW)
+        folder_actions_label.grid(row=5, column=0, columnspan=4, sticky=tk.NSEW)
 
-        update_artist_button = tk.Button(function_frame, text="Update Artist", command=lambda: False)
-        update_artist_button.grid(row=4, column=0, sticky=tk.NSEW)
+        update_artist_button = tk.Button(function_frame, text="Update Artist", width=8,
+                                         command=lambda: self.update_folder_artist())
+        update_artist_button.grid(row=6, column=0, columnspan=2, sticky=tk.NS)
 
-        new_artist_input = tk.Entry(function_frame, textvariable=tk.StringVar())
-        new_artist_input.grid(row=4, column=1,  columnspan=2, sticky=tk.NSEW)
+        self.new_artist_input = tk.Entry(function_frame, textvariable=tk.StringVar())
+        self.new_artist_input.grid(row=6, column=2, columnspan=2, sticky=tk.NSEW)
 
-        update_album_button = tk.Button(function_frame, text="Update Album", command=lambda: False)
-        update_album_button.grid(row=5, column=0, sticky=tk.NSEW)
+        update_album_button = tk.Button(function_frame, text="Update Album", width=8, command=lambda: self.update_folder_album())
+        update_album_button.grid(row=7, column=0, columnspan=2, sticky=tk.NS)
 
-        new_album_input = tk.Entry(function_frame, textvariable=tk.StringVar())
-        new_album_input.grid(row=5, column=1, columnspan=2, sticky=tk.NSEW)
+        self.new_album_input = tk.Entry(function_frame, textvariable=tk.StringVar())
+        self.new_album_input.grid(row=7, column=2, columnspan=2, sticky=tk.NSEW)
+
+        update_genre_button = tk.Button(function_frame, text="Update Genre", width=8, command=lambda: self.update_folder_genre())
+        update_genre_button.grid(row=8, column=0, columnspan=2, sticky=tk.NS)
+
+        self.new_genre_input = tk.Entry(function_frame, textvariable=tk.StringVar())
+        self.new_genre_input.grid(row=8, column=2, columnspan=2, sticky=tk.NSEW)
 
         # Song Data Frame
         song_label = tk.Label(song_data_frame, text="Song Information")
@@ -257,25 +276,25 @@ class MusicFileManager(tk.Tk):
         self.entry_dictionary["genre"] = genre_input
 
         back_button = tk.Button(song_data_frame, text="Back", width=5,
-            command=lambda: self.get_previous_song())
+                                command=lambda: self.get_previous_song())
         back_button.grid(row=3, column=0, columnspan=2)
 
         save_button = tk.Button(song_data_frame, text="Save", width=5,
-            command=lambda: self.save_song())
+                                command=lambda: self.save_song())
         save_button.grid(row=3, column=2, columnspan=2)
 
         next_button = tk.Button(song_data_frame, text="Next", width=5,
-            command=lambda: self.get_next_song())
+                                command=lambda: self.get_next_song())
         next_button.grid(row=3, column=4, columnspan=2)
 
         # Song Data Extended Frame
         expanded_label = tk.Label(song_data_expanded_frame, text="Extended Data")
         expanded_label.grid(row=0, column=0, columnspan=4, sticky=tk.NSEW)
 
-        main_tags = ["title", "artist", "tracknumber", "album", "genre"]
         curr_row = 1
         curr_col = 0
-        for index, key in enumerate(filter(lambda x: "musicbrainz" not in x and x not in main_tags, EasyID3.valid_keys.keys())):
+        for index, key in enumerate(filter(lambda x: "musicbrainz" not in x and x not in self.main_mp3_tags,
+                                           EasyID3.valid_keys.keys())):
             key_label = tk.Label(song_data_expanded_frame, text=key)
             key_label.grid(row=curr_row, column=curr_col, sticky=tk.NSEW)
 
@@ -291,12 +310,39 @@ class MusicFileManager(tk.Tk):
             else:
                 curr_col = 0
 
-    def get_song_list(self):
-        self.song_index = 0
-        self.song_list = get_list([], self.source.get())
-        self.set_song_and_fields(self.song_index)
+    def get_previous_song(self):
+        if self.song_index > 0:
+            self.song_index -= 1
+        else:
+            self.song_index = len(self.song_list) - 1
+        self.set_song_fields(self.song_index)
 
-    def set_song_and_fields(self, index):
+    def get_next_song(self):
+        if self.song_index < len(self.song_list) - 1:
+            self.song_index += 1
+        else:
+            self.song_index = 0
+        self.set_song_fields(self.song_index)
+
+    def get_mp4s(self):
+        return get_mp4_list([], self.source.get())
+
+    def get_mp3s(self):
+        return get_mp3_list([], self.source.get())
+
+    def get_song_list(self):
+        return get_list([], self.source.get())
+
+    def set_song_list(self, sub_dir: bool = True):
+        self.song_index = 0
+        self.song_list = get_list([], self.source.get(), sub_dir=sub_dir)
+        self.set_song_fields(self.song_index)
+
+    def move_files(self, files: list):
+        move_files(self.destination.get(), self.source.get(), files)
+        messagebox.showinfo("Move Info", "Move complete.")
+
+    def set_song_fields(self, index: int):
         try:
             self.song = MP3(self.song_list[index], ID3=EasyID3)
             self.file.set(os.path.basename(self.song.filename))
@@ -311,35 +357,17 @@ class MusicFileManager(tk.Tk):
             print(f"File {self.song_list[index]} was not a valid audio file.")
             self.get_next_song()
 
-    def get_mp4s(self):
-        mp4_list = get_mp4_list([], self.source.get())
-        move_files(self.destination.get(), None, mp4_list)
-
-    def get_mp3s(self):
-        mp3_list = get_mp3_list([], self.source.get())
-        move_files(self.destination.get(), None, mp3_list)
-
-    def get_previous_song(self):
-        if self.song_index > 0:
-            self.song_index -= 1
-        else:
-            self.song_index = len(self.song_list) - 1
-        self.set_song_and_fields(self.song_index)
-
-    def get_next_song(self):
-        if self.song_index < len(self.song_list) - 1:
-            self.song_index += 1
-        else:
-            self.song_index = 0
-        self.set_song_and_fields(self.song_index)
-
     def save_song(self):
         print("Saving...")
         # save all tags that have been updated
         for key in filter(lambda x: "musicbrainz" not in x, EasyID3.valid_keys.keys()):
+            # create and update
             if self.entry_dictionary.get(key).get() != "":
                 # verify what is added is valid to the field; with check if empty (removed)
                 self.song[key] = self.entry_dictionary.get(key).get()
+            # remove key if set field to blank
+            elif key in self.song.keys() and self.entry_dictionary.get(key).get() == "":
+                self.song.pop(key=key)
 
         # save the song
         self.song.save()
@@ -353,9 +381,40 @@ class MusicFileManager(tk.Tk):
 
             # update it within the list if the name is different
             self.song_list[self.song_index] = join(Path(self.song.filename).parent, self.file.get())
-            print("new at: " + self.song_list[self.song_index])
+            print("New file at: " + self.song_list[self.song_index])
 
-        print("Save complete!")
+        messagebox.showinfo("Info", "Song saved!")
+
+    def update_folder_artist(self):
+        print("Updating folder artist")
+        new_artist = self.new_artist_input.get().strip()
+        self.mass_update(self.artist_mp3_tags, new_artist)
+
+    def update_folder_album(self):
+        print("Updating folder album")
+        new_album = self.new_album_input.get().strip()
+        self.mass_update(self.album_mp3_tags, new_album)
+
+    def update_folder_genre(self):
+        print("Updating folder genre")
+        new_genre = self.new_genre_input.get().strip()
+        self.mass_update(["genre"], new_genre)
+
+    def mass_update(self, keys: list, data: str):
+        songs = get_mp3_list([], self.source.get())
+        new_data = data.strip()
+        if new_data != "":
+            for song in songs:
+                mp3_song = MP3(song, ID3=EasyID3)
+                for key in keys:
+                    if "sort" in key and new_data.startswith("The "):
+                        # remove "The " for sorting data
+                        mp3_song[key] = new_data[4:]
+                    else:
+                        mp3_song[key] = new_data
+                mp3_song.save()
+
+        messagebox.showinfo("Info", "Mass update complete!")
 
 
 if __name__ == '__main__':
